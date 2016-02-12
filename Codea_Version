@@ -1,0 +1,409 @@
+--# Main
+--Created by London Lowmanstone IV
+
+-- 2D Grapher
+
+-- displayMode(FULLSCREEN)
+
+-- Use this function to perform your initial setup
+function setup()
+    g = TwoDimGrapher()
+    gc = GestureController(g)
+
+    g.zero = {WIDTH/2, HEIGHT/2}
+    g.xpix = 30
+    g.ypix = g.xpix
+    pastDim = {WIDTH, HEIGHT}
+    
+    parameter.text("Function", "math.sin(x^2)", function(v) g.equation=v end)
+    parameter.number("Point Frequency", .01, 5, 2, function(v) g.deltax=v end)
+    parameter.boolean("Keep Quality", true, function(v) if v then g.deltaMode="pix" else g.deltaMode="axes" end end)
+    parameter.boolean("Show Points", false, function(v) g.showPoints=v end)
+    parameter.color("Line Color", color(0, 0, 255), function(v) g.lineColor=v end)
+    parameter.color("Point Color", color(0, 255, 0), function(v) g.pointColor=v end)
+    parameter.color("Background Color", color(0, 0, 0))
+    parameter.number("Line Width", 1, 20, 5, function(v) g.lineWidth=v end)
+    parameter.number("Point Radius", 1, 20, 5, function(v) g.pointRadius=v end)
+    parameter.action("Reset Axes", function(_) g.zero = {WIDTH/2, HEIGHT/2} end)
+    parameter.action("Reset Zoom", function(_) g.xpix = 30 
+                                               g.ypix = g.xpix end)
+end
+
+-- This function gets called once every frame
+function draw()
+    background(Background_Color)
+    curDim = {WIDTH, HEIGHT}
+    if pastDim[1]~=curDim[1] or pastDim[2]~=curDim[2] then
+        g.zero={g.zero[1]+(curDim[1]-pastDim[1])/2, g.zero[2]}
+    end
+    pastDim = {WIDTH, HEIGHT}
+    curErr = curErr or nil
+    local status, err = pcall(function() g:graph() end)
+    
+    function errorIs(err, target)
+        s, e = string.find(err,target, 1, true)
+        if s==string.len(err)-string.len(target)+1 then
+            return true
+        else
+            return false
+        end
+    end
+    
+    if status then
+        if curErr then
+            output.clear()
+            curErr = nil
+        end
+    else
+        if errorIs(err, "unusable function") then
+            if curErr ~= "unusable function" then -- if this is a new error
+                output.clear()
+                print("Unable to graph function!")
+                curErr="unusable function"
+            end
+        else -- unexpected error!
+            print(err)
+            print("Unexpected issue! Please show screen to London immediately.")
+            while true do end -- essentially stop the program
+        end
+    end
+    
+end
+
+function touched(t)
+    -- print("touched1")
+    gc:touched(t)
+end
+
+--# TwoDimGrapher
+--TwoDimGrapher Class
+--London Lowmanstone IV
+--Version 2.07
+--12/26/2015
+-- imports Useful Functions
+
+-- deleted useless code in graph()
+-- curPoint in graph() is now local
+
+TwoDimGrapher = class()
+
+-- equation is the equation to graph in a string
+-- axesZero is a table {x, y} where the point {0,0} is on the screen
+-- xpix and ypix are how many pixels it takes to move one unit along the length of that axis
+-- deltax is the units in between each points it graphs
+-- deltaMode changes what deltax means. If deltaMode is "pix", then deltax is in terms of pixels (i.e. if deltax is 1, then the points graphed will be one pixel apart). if deltaMode is "axes" then deltax is in terms of the units of the function (i.e. if deltax is 1, then the points graphed will be x=1, x=2, x=3, etc.)
+function TwoDimGrapher:init(axesZero, xpix, ypix, lineColor, showPoints, pointColor, showLines, equation, deltax, deltaMode, lineWidth, pointRad)
+    self.zero = axesZero or {0,0}
+    self.xpix = xpix or 1
+    self.ypix = ypix or 1
+    self.lineColor = lineColor or color(0,0,255)
+    self.showPoints = showPoints or false -- this works because the default is false
+    self.pointColor = pointColor or color(0,255,0)
+    if showLines~=nil then -- the or statement wont catch false so I do this
+        self.showLines = showLines
+    else
+        self.showLines = true
+    end
+    self.equation = equation -- no default yet
+    self.deltax = deltax or 1
+    self.deltaMode = deltaMode or "axes" -- other mode is "pix"
+    self.lineWidth = lineWidth or 5
+    self.pointRadius = pointRad or 5
+end
+
+function TwoDimGrapher:graph(equation, lineColor, pointColor)
+    equation = equation or self.equation
+    lineColor = lineColor or self.lineColor
+    pointColor = pointColor or self.pointColor
+    local myDelta = self.deltax
+    if self.deltaMode == "pix" then -- if the change in x is in pixels, convert it into units based on the function
+        myDelta = self.deltax/self.xpix
+    end
+    local xmin = -self.zero[1]/self.xpix -- min x value on screen
+    local xmax = xmin+WIDTH/self.xpix -- max x value on screen
+    local ymin = -self.zero[2]/self.ypix
+    local ymax = ymin+HEIGHT/self.ypix
+    local curx = xmin-xmin%myDelta-myDelta -- get the first x off the left of the screen that's an even multiple of deltax (in case the user wants to specify deltax in order to catch bad points)
+    -- running it once so that I'm not doing a constant check
+    local prevPoint = {curx, self:getY(curx, equation)}
+    -- a failed getY should return nil
+    if self.showPoints then self:drawPoint(prevPoint, pointColor) end
+    while curx<=xmax do -- want to do one more point past the end
+        curx = curx + myDelta
+        local curPoint = {curx, self:getY(curx, equation)}
+        if self.showPoints then
+            self:drawPoint(curPoint, pointColor)
+        end
+        if self.showLines then
+            self:drawLine(prevPoint, curPoint, lineColor)
+        end
+        prevPoint = copyTable(curPoint) -- copyTable is from Useful Functions
+    end  
+end
+
+function TwoDimGrapher:convertGraphToScreen(pt)
+    if self:noNils(pt) then
+        return {self.zero[1]+pt[1]*self.xpix, self.zero[2]+pt[2]*self.ypix}
+    else
+        return nil
+    end
+end
+
+function TwoDimGrapher:drawPoint(pt, clr, pointRad)
+    clr = clr or self.pointColor
+    pointRad = pointRad or self.pointRadius
+    if self:noNils(pt) then
+        pushBoth()
+        fill(clr)
+        local x, y = unpack(self:convertGraphToScreen(pt))
+        ellipse(x, y, pointRad*2)
+        popBoth()
+    end
+end
+
+function TwoDimGrapher:drawLine(pt1, pt2, clr, lineWidth)
+    clr = clr or self.lineColor
+    lineWidth = lineWidth or self.lineWidth
+    if self:noNils(pt1) and self:noNils(pt2) then
+        pushBoth()
+        stroke(clr)
+        strokeWidth(lineWidth)
+        local x1, y1 = unpack(self:convertGraphToScreen(pt1))
+        local x2, y2 = unpack(self:convertGraphToScreen(pt2))
+        line(x1, y1, x2, y2)
+        popBoth()
+    end
+end
+
+function TwoDimGrapher:noNils(pt)
+    if pt[1]==nil or pt[2]==nil then
+        return false
+    else
+        return true
+    end
+end
+
+function TwoDimGrapher:getY(xval, equation)
+    equation = equation or self.equation
+    if xval/xval~=1 and xval~=0 then -- if xval was divided by zero (which gives it the number value of "nan")
+        return nil
+    end
+    local formula, _ = string.gsub(equation, "x", "("..xval..")")
+    local toRun = loadstring("return ("..formula..")")
+    local status, ans = pcall(loadstring("return ("..formula..")"))
+    if status then
+        if type(ans)=="number" then
+            return ans
+        else
+            return nil -- in case of a divide by 0 or overflow
+        end
+    else
+        -- print(loadstring("return ("..formula..")")) -- to give some idea as to what the problem is
+        error("unusable function")
+    end
+end
+
+--# GestureController
+--GestureController Class
+--London Lowmanstone IV
+--Version 2.00
+--12/26/2015
+
+-- working on zoomKeepCenter; eveything works properly as it did in 1.03
+-- fixed incorrect documentation on self:translate and moved it to local function
+-- added defualt values to local translate()
+-- zoomKeepMid works correctly
+
+GestureController = class()
+
+function GestureController:init(grapher)
+    self.graph = grapher
+    self.curTouches = {}
+    self.pinchInfo = {}
+    self.maxTouches = 2
+end
+
+function GestureController:touched(t)
+    -- how far to move in terms of pixels
+    function translateGraph(x, y)
+        x = x or 0
+        y = y or 0
+        self.graph.zero = {self.graph.zero[1]+x, self.graph.zero[2]+y}
+    end
+    
+    function getTouchIndex(t)
+        for i, possMatch in ipairs(self.curTouches) do
+            if possMatch.id == t.id then return i end
+        end
+        return nil
+    end
+    
+    function isWatching(t)
+        if getTouchIndex(t) then
+            return true
+        else
+            return false
+        end
+    end
+    
+    function removeTouch(t)
+        local index = getTouchIndex(t)
+        if index then
+            table.remove(self.curTouches, index)
+            return true
+        else
+            return false -- this should never happen, here as a failsafe
+        end        
+    end
+    
+    function updateTouch(t)
+        local index = getTouchIndex(t)
+        if index then
+            self.curTouches[index] = t
+        else
+            return false -- this should never happen; here as a failsafe
+        end 
+    end
+    
+    function getPinchType(t1, t2)
+        local xdiff, ydiff = t1.x-t2.x, t1.y-t2.y
+        -- The sign doesnt matter to me, and degrees are easier to work with, so convert it to degrees and take its absolute value
+        local angle = math.deg(math.atan2(ydiff, xdiff))
+        -- directly left is 0, then counterclockwise increases so below is 90 until it hits 180 and then it instantly jumps negative (i.e. -179) as it continues to go counterclockwise so above is -90 and it makes its way back to 0 again.
+        
+        local degBound = 15 -- how many degrees within horizontal and vertical that it is considered a horiz or vert pinch
+        if (angle+degBound)%90>degBound*2 then -- if its not close enough to horiz or vert
+            return "all"
+        elseif (angle+45)%180>90 then -- closer to 90 than to 0 or 180. Note that the borderline values dont really matter since those fall under the above condition.
+            return "vert"
+        else
+            return "horiz"
+        end
+    end
+    
+    function getMidpoint(t1, t2)
+        local dist = {t1.x-t2.x, t1.y-t2.y}
+        return {t2.x+dist[1]/2, t2.y+dist[2]/2}   
+    end
+    
+    -- dist between two touches
+    -- for all, it just returns the closest or farthest horiz or vert distance depending on the settings
+    function touchDist(t1, t2, dir)
+        if dir=="all" then
+            local dist = math.sqrt((t1.x-t2.x)^2+(t1.y-t2.y)^2)
+            -- now pretend that they dragged at a 45 degree angle, and set the touch dist to be the side length of a right isosceles triangle with that distance as the hypotenuse. (so that it's the same for both the x and y axes and it scales correctly)
+            return dist/math.sqrt(2)
+        elseif dir=="horiz" then
+            return math.abs(t1.x-t2.x)
+        else -- dir=="vert"
+            return math.abs(t1.y-t2.y)
+        end
+    end
+    
+    function posOrNeg(val, default)
+        if default==nil then
+            default=0
+        end
+        if val>0 then
+            return 1
+        elseif val<0 then
+            return -1
+        else
+            return default
+        end
+    end
+    
+    function zoom(oldDist, newDist, dir)
+        local dir = dir or self.pinchInfo.pinchType
+        if dir=="all" then
+            zoom(oldDist, newDist, "horiz")
+            zoom(oldDist, newDist, "vert")
+        elseif dir=="horiz" then
+            -- this equation was figured out on paper
+            self.graph.xpix = newDist*self.graph.xpix/oldDist
+        else -- dir=="vert"
+            self.graph.ypix = newDist*self.graph.ypix/oldDist
+        end
+    end
+    
+    function screenToGraphCoords(p)
+        return {(p[1]-self.graph.zero[1])/self.graph.xpix, (p[2]-self.graph.zero[2])/self.graph.ypix} -- just the reverse of the graphToScreen function provided by the grapher.
+    end
+    
+    -- translates the graph before zooming in order to keep the original midpoint of the two touches in the same spot on the screen. Equation was figured out on paper.
+    function zoomKeepMid(oldDist, newDist, dir)
+        local dir, midPoint = dir or self.pinchInfo.pinchType,
+                              self.pinchInfo.origMidpoint
+        if dir=="all" then
+            zoomKeepMid(oldDist, newDist, "horiz")
+            zoomKeepMid(oldDist, newDist, "vert")
+        elseif dir=="horiz" then
+            translateGraph((oldDist-newDist)/oldDist*self.graph.xpix*screenToGraphCoords(midPoint)[1], 0)
+            zoom(oldDist, newDist, "horiz") 
+        else -- dir=="vert"
+            translateGraph(0, (oldDist-newDist)/oldDist*self.graph.ypix*screenToGraphCoords(midPoint)[2])
+            zoom(oldDist, newDist, "vert")
+        end      
+    end
+    
+    if t.state==BEGAN then
+        if table.maxn(self.curTouches)<self.maxTouches then -- if there is room to watch it
+            table.insert(self.curTouches, t) -- watch it
+            if table.maxn(self.curTouches)==2 then -- if its the second watched touch
+                self.pinchInfo.pinchType=getPinchType(self.curTouches[1], t)
+                self.pinchInfo.origMidpoint = getMidpoint(self.curTouches[1], t)
+            end
+        end
+    else
+        if isWatching(t) then -- dont care unless I'm watching it
+            if t.state==MOVING then
+                
+                if table.maxn(self.curTouches)==1 then -- if only watching one touch
+                    translateGraph(t.deltaX, t.deltaY)
+                    
+                elseif table.maxn(self.curTouches)==2 then
+                    -- othert is short for "other touch"
+                    local oldt, othert =
+                        self.curTouches[getTouchIndex(t)],
+                        self.curTouches[getTouchIndex(t)%2+1]
+                    
+                    local oldDist, newDist = 
+                        touchDist(oldt, othert, self.pinchInfo.pinchType),
+                        touchDist(t, othert, self.pinchInfo.pinchType)
+                    
+                    function isGoodVal(val)
+                        if type(val)=="table" then
+                            return isGoodVal(val[1]) and isGoodVal(val[2])
+                        else
+                            if val==0 or val==nil then
+                                return false
+                            else
+                                return true
+                            end
+                        end
+                    end
+                    
+                    -- as long as weird stuff wont happen...
+                    if isGoodVal(oldDist) and isGoodVal(newDist) then
+                        zoomKeepMid(oldDist, newDist)
+                       
+                        updateTouch(t) -- keep the data current (this would normally be run earlier, but I need some of the old data for calculations)
+                    end
+                end
+                
+            else -- t.state==ENDED
+                --[[
+                if t.deltaX>0 or t.deltaY>0 then
+                    print("swipe!") -- it takes a really fast swipe to catch it
+                end
+                  ]]
+                removeTouch(t) -- stop watching the touch
+                if table.maxn(self.curTouches)==1 then
+                    self.pinchInfo = {} -- delete all the old pinch info
+                end
+            end
+        end
+    end
+end
+
+
